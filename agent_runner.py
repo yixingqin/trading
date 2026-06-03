@@ -1,23 +1,16 @@
 """
 GitHub Actions entry point.
 
-GitHub Actions has full internet access, so:
-- yfinance fetches 4h candle data directly (free, no key needed)
-- Python calculates Stoch RSI signals
-- Claude API executes trades via the Robinhood MCP server
+Claude API handles everything:
+- web_search tool fetches candle/price data (free, no API key)
+- Robinhood MCP tool places orders
+No local dependencies on yfinance or pandas needed at runtime.
 """
 
 import os
-import sys
+import re
 import json
 import anthropic
-
-sys.path.insert(0, os.path.dirname(__file__))
-
-from config import WATCHLIST, POSITION_SIZE_PCT, ACCOUNT_SIZE
-import state
-from robinhood_client import get_candles
-from indicators import current_signals, exit_tranches_hit
 
 DRY_RUN = os.environ.get("DRY_RUN", "false").lower() in ("1", "true", "yes")
 ROBINHOOD_MCP_URL = os.environ.get("ROBINHOOD_MCP_URL", "https://agent.robinhood.com/mcp/trading")
@@ -25,82 +18,93 @@ ROBINHOOD_MCP_TOKEN = os.environ["ROBINHOOD_MCP_TOKEN"]
 ANTHROPIC_API_KEY = os.environ["ANTHROPIC_API_KEY"]
 TRADING_ACCOUNT = os.environ.get("TRADING_ACCOUNT_ID", "692348949")
 
+WATCHLIST = [
+    "HIVE", "SHAZ", "TE", "OUST", "FCEL", "SHMD", "VELO", "NBIS",
+    "CRWV", "BE", "CRDO", "AAOI", "LITE", "OKLO", "ASTS", "RKLB",
+    "PLTR", "NOW", "AUR", "HOOD",
+]
 
-def build_order_prompt(signals: list[dict], positions: dict) -> str:
-    position_summary = json.dumps(positions, indent=2) if positions else "none"
-    signal_lines = "\n".join(
-        f"- {s['symbol']}: %K={s['k']} RSI={s['rsi']} signal={s['signal']} "
-        f"{'(position open, tranches_sold=' + str(positions[s['symbol']]['tranches_sold']) + ')' if s['symbol'] in positions else ''}"
-        for s in signals
-    )
-    dollar_size = ACCOUNT_SIZE * POSITION_SIZE_PCT
+PROMPT = f"""
+You are an automated trading bot. Today's date/time is current market time.
+Account number: {TRADING_ACCOUNT} (agentic_allowed=true, cash account).
 
-    return f"""
-You are executing trades for a Stoch RSI strategy. Account number: {TRADING_ACCOUNT} (agentic_allowed=true).
+## Strategy: 4h Stoch RSI (3,3,14,14) + RSI 14
 
-## Current signals (4h Stoch RSI 3,3,14,14 + RSI 14)
+**Indicators:**
+- RSI(14) using Wilder EMA smoothing
+- Stoch RSI raw = 100 × (RSI − min(RSI,14)) / (max(RSI,14) − min(RSI,14))
+- %K = 3-period SMA of raw; %D = 3-period SMA of %K
 
-{signal_lines}
+**Entry signals:**
+- Best Buy: %K < 10 AND RSI ≤ 50 → buy $250 (market order)
+- Watch:    %K < 10 AND RSI ≤ 60 → buy $250 (market order)
+- Only enter if no open position in that symbol
 
-## Open positions
-{position_summary}
+**Exit (staged, 25% each):**
+- Sell 25% of position when %K first crosses ≥ 75, 80, 85, 90
 
-## Rules
-- best_buy or watch signal + no open position → buy ~${dollar_size:.0f} (market order, dollar_amount)
-- Open position + %K ≥ 75/80/85/90 → sell 25% tranche if that level not yet in tranches_sold
-- {'THIS IS A DRY RUN. Do NOT place any orders. Just describe what you would do.' if DRY_RUN else 'Place orders now using place_equity_order.'}
+## Open positions (state.json)
+{_load_state()}
 
-## Required output format
-After acting, output a JSON block tagged ```actions``` listing what was done:
-[{{"symbol":"X","action":"buy","dollars":250}}, {{"symbol":"Y","action":"sell_tranche","k_level":75,"shares":10.5}}]
-If nothing to do, output: ```actions\n[]\n```
+## Watchlist
+{', '.join(WATCHLIST)}
+
+## Steps to execute NOW
+
+1. Use web_search to get hourly OHLCV data for each watchlist symbol
+   (search "SYMBOL 1h historical prices" or fetch Yahoo Finance / Barchart).
+   You need ~100 hours of closing prices to compute the indicators.
+
+2. Calculate 4h Stoch RSI and RSI for each symbol (resample 1h→4h first:
+   group into 4h buckets starting 09:30 ET, take last close of each bucket).
+
+3. Check entry and exit conditions against open positions above.
+
+4. {'DO NOT place any orders — this is a DRY RUN. Describe what you would do.' if DRY_RUN else 'Place orders via place_equity_order for every triggered signal.'}
+
+5. Print a results table: symbol | %K | RSI | signal | action
+
+6. Output a JSON block at the end:
+```actions
+[{{"symbol":"X","action":"buy","dollars":250}},{{"symbol":"Y","action":"sell_tranche","k_level":75,"shares":5.2}}]
+```
+Empty array if nothing triggered.
 """
 
 
+def _load_state() -> str:
+    from pathlib import Path
+    f = Path(__file__).parent / "state.json"
+    return f.read_text() if f.exists() else "{}"
+
+
+def _save_state_updates(full_text: str, actions: list) -> None:
+    import state
+    for act in actions:
+        sym = act.get("symbol")
+        if not sym or DRY_RUN:
+            continue
+        if act.get("action") == "buy":
+            state.open_position(sym, shares=0, entry_price=0, dollar_invested=act.get("dollars", 250))
+        elif act.get("action") == "sell_tranche":
+            state.record_tranche_sold(sym, act["k_level"], act.get("shares", 0))
+            import sys; sys.path.insert(0, os.path.dirname(__file__))
+            pos = state.get_position(sym)
+            if pos and len(pos["tranches_sold"]) >= 4:
+                state.close_position(sym)
+                print(f"{sym}: fully closed")
+
+
 def run() -> None:
-    print(f"=== Stoch RSI scan — DRY_RUN={DRY_RUN} ===\n")
+    print(f"=== Stoch RSI scan  DRY_RUN={DRY_RUN} ===\n")
 
-    # ── 1. Fetch signals for all watchlist symbols ────────────────────────────
-    signals = []
-    for symbol in WATCHLIST:
-        try:
-            df = get_candles(symbol)
-            if df.empty or len(df) < 50:
-                print(f"{symbol}: insufficient data")
-                continue
-            sig = current_signals(df)
-            sig["symbol"] = symbol
-            signals.append(sig)
-            print(f"{symbol:6s}  k={sig['k']:6.2f}  rsi={sig['rsi']:6.2f}  → {sig['signal']}")
-        except Exception as e:
-            print(f"{symbol}: error — {e}")
-
-    # ── 2. Filter to actionable signals only ─────────────────────────────────
-    positions = state.all_positions()
-    actionable = []
-    for sig in signals:
-        sym = sig["symbol"]
-        if sig["signal"] in ("best_buy", "watch") and sym not in positions:
-            actionable.append(sig)
-        elif sym in positions:
-            pos = positions[sym]
-            if exit_tranches_hit(sig["k"], pos["tranches_sold"]):
-                actionable.append(sig)
-
-    if not actionable:
-        print("\nNo actionable signals this scan.")
-        return
-
-    print(f"\nActionable: {[s['symbol'] for s in actionable]}")
-
-    # ── 3. Hand off to Claude + Robinhood MCP for execution ──────────────────
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-    prompt = build_order_prompt(actionable, positions)
 
     response = client.beta.messages.create(
         model="claude-opus-4-8",
-        max_tokens=4096,
-        messages=[{"role": "user", "content": prompt}],
+        max_tokens=16000,
+        messages=[{"role": "user", "content": PROMPT}],
+        tools=[{"type": "web_search_20250305", "name": "web_search"}],
         mcp_servers=[{
             "type": "url",
             "url": ROBINHOOD_MCP_URL,
@@ -110,29 +114,15 @@ def run() -> None:
         betas=["mcp-client-2025-04-04"],
     )
 
-    # ── 4. Parse actions and update local state ───────────────────────────────
-    import re
     full_text = "".join(b.text for b in response.content if hasattr(b, "text"))
-    print("\n" + full_text)
+    print(full_text)
 
     match = re.search(r"```actions\s*\n(.*?)```", full_text, re.DOTALL)
-    if not match:
-        return
+    if match:
+        actions = json.loads(match.group(1).strip())
+        _save_state_updates(full_text, actions)
 
-    actions = json.loads(match.group(1).strip())
-    for act in actions:
-        sym = act["symbol"]
-        if act["action"] == "buy" and not DRY_RUN:
-            # Claude placed the order; record in state (price unknown until fill)
-            # Use last close as approximate entry price
-            sig = next((s for s in signals if s["symbol"] == sym), {})
-            state.open_position(sym, shares=0, entry_price=0, dollar_invested=act.get("dollars", 0))
-        elif act["action"] == "sell_tranche" and not DRY_RUN:
-            state.record_tranche_sold(sym, act["k_level"], act.get("shares", 0))
-            pos = state.get_position(sym)
-            if pos and len(pos["tranches_sold"]) >= 4:
-                state.close_position(sym)
-                print(f"{sym}: fully closed")
+    print(f"\nTokens used — input: {response.usage.input_tokens}  output: {response.usage.output_tokens}")
 
 
 if __name__ == "__main__":
