@@ -1,8 +1,10 @@
 """
-GitHub Actions entry point: runs the strategy via the Claude API.
+GitHub Actions entry point.
 
-Claude fetches candle data, calculates Stoch RSI signals, and executes
-trades through the Robinhood MCP server — all in one API call.
+GitHub Actions has full internet access, so:
+- yfinance fetches 4h candle data directly (free, no key needed)
+- Python calculates Stoch RSI signals
+- Claude API executes trades via the Robinhood MCP server
 """
 
 import os
@@ -10,107 +12,127 @@ import sys
 import json
 import anthropic
 
-ANTHROPIC_API_KEY = os.environ["ANTHROPIC_API_KEY"]
+sys.path.insert(0, os.path.dirname(__file__))
+
+from config import WATCHLIST, POSITION_SIZE_PCT, ACCOUNT_SIZE
+import state
+from robinhood_client import get_candles
+from indicators import current_signals, exit_tranches_hit
+
+DRY_RUN = os.environ.get("DRY_RUN", "false").lower() in ("1", "true", "yes")
 ROBINHOOD_MCP_URL = os.environ.get("ROBINHOOD_MCP_URL", "https://agent.robinhood.com/mcp/trading")
 ROBINHOOD_MCP_TOKEN = os.environ["ROBINHOOD_MCP_TOKEN"]
-DRY_RUN = os.environ.get("DRY_RUN", "false").lower() in ("1", "true", "yes")
+ANTHROPIC_API_KEY = os.environ["ANTHROPIC_API_KEY"]
+TRADING_ACCOUNT = os.environ.get("TRADING_ACCOUNT_ID", "692348949")
 
-# Load strategy config from config.py values (keep single source of truth)
-sys.path.insert(0, os.path.dirname(__file__))
-from config import (
-    WATCHLIST, POSITION_SIZE_PCT, ACCOUNT_SIZE, EXIT_TRANCHES,
-    BEST_BUY_K_THRESHOLD, BEST_BUY_RSI_THRESHOLD,
-    WATCH_K_THRESHOLD, WATCH_RSI_THRESHOLD,
-)
 
-STRATEGY_PROMPT = f"""
-You are an automated trading bot executing a 4h Stoch RSI strategy. Today's date/time is current market time.
+def build_order_prompt(signals: list[dict], positions: dict) -> str:
+    position_summary = json.dumps(positions, indent=2) if positions else "none"
+    signal_lines = "\n".join(
+        f"- {s['symbol']}: %K={s['k']} RSI={s['rsi']} signal={s['signal']} "
+        f"{'(position open, tranches_sold=' + str(positions[s['symbol']]['tranches_sold']) + ')' if s['symbol'] in positions else ''}"
+        for s in signals
+    )
+    dollar_size = ACCOUNT_SIZE * POSITION_SIZE_PCT
 
-## Strategy Rules
+    return f"""
+You are executing trades for a Stoch RSI strategy. Account number: {TRADING_ACCOUNT} (agentic_allowed=true).
 
-**Indicators:** 4h Stoch RSI (3,3,14,14) with RSI 14
-- Best Buy signal: %K < {BEST_BUY_K_THRESHOLD} AND RSI ≤ {BEST_BUY_RSI_THRESHOLD}
-- Watch signal:    %K < {WATCH_K_THRESHOLD}  AND RSI ≤ {WATCH_RSI_THRESHOLD}
+## Current signals (4h Stoch RSI 3,3,14,14 + RSI 14)
 
-**Position sizing:** ${ACCOUNT_SIZE * POSITION_SIZE_PCT:.0f} per position (5% of ${ACCOUNT_SIZE:.0f} account)
+{signal_lines}
 
-**Staged exits (25% each):** sell at %K ≥ 75 / 80 / 85 / 90
+## Open positions
+{position_summary}
 
-**Account:** use the agentic account (agentic_allowed=true, account_number ends in 8949)
+## Rules
+- best_buy or watch signal + no open position → buy ~${dollar_size:.0f} (market order, dollar_amount)
+- Open position + %K ≥ 75/80/85/90 → sell 25% tranche if that level not yet in tranches_sold
+- {'THIS IS A DRY RUN. Do NOT place any orders. Just describe what you would do.' if DRY_RUN else 'Place orders now using place_equity_order.'}
 
-## Current State File
-{_load_state()}
-
-## Watchlist
-{', '.join(WATCHLIST)}
-
-## Instructions
-
-1. Fetch current account buying power via `get_portfolio`.
-2. For EACH symbol in the watchlist:
-   a. Fetch 4h OHLCV candle data using Yahoo Finance API:
-      GET https://query1.finance.yahoo.com/v8/finance/chart/SYMBOL?interval=1h&range=30d
-      Then resample 1h → 4h (group by 4h buckets starting 9:30 ET).
-   b. Calculate Stoch RSI (3,3,14,14) and RSI(14) on the 4h closes.
-      - RSI = Wilder's EMA smoothing
-      - Stoch RSI raw = 100 × (RSI - min(RSI,14)) / (max(RSI,14) - min(RSI,14))
-      - %K = 3-period SMA of raw Stoch RSI
-      - %D = 3-period SMA of %K
-   c. Apply entry/exit rules:
-      - If symbol is in state (open position): check exit tranches not yet hit.
-      - If symbol is NOT in state and signal is best_buy or watch: enter if buying_power ≥ $10.
-3. {"LOG all signals and intended actions but place NO orders (DRY RUN)." if DRY_RUN else "Place orders via `place_equity_order` for any signals triggered."}
-4. Print a final summary table: symbol | %K | RSI | signal | action taken.
+## Required output format
+After acting, output a JSON block tagged ```actions``` listing what was done:
+[{{"symbol":"X","action":"buy","dollars":250}}, {{"symbol":"Y","action":"sell_tranche","k_level":75,"shares":10.5}}]
+If nothing to do, output: ```actions\n[]\n```
 """
 
 
-def _load_state() -> str:
-    from pathlib import Path
-    state_file = Path(__file__).parent / "state.json"
-    if state_file.exists():
-        return state_file.read_text()
-    return "{}"
-
-
-def _save_state(text: str) -> None:
-    """Claude may output updated state JSON in a ```state.json block."""
-    import re
-    from pathlib import Path
-    match = re.search(r"```state\.json\s*\n(.*?)```", text, re.DOTALL)
-    if match:
-        Path(__file__).parent.joinpath("state.json").write_text(match.group(1).strip())
-
-
 def run() -> None:
-    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+    print(f"=== Stoch RSI scan — DRY_RUN={DRY_RUN} ===\n")
 
-    print(f"Starting scan — DRY_RUN={DRY_RUN}")
+    # ── 1. Fetch signals for all watchlist symbols ────────────────────────────
+    signals = []
+    for symbol in WATCHLIST:
+        try:
+            df = get_candles(symbol)
+            if df.empty or len(df) < 50:
+                print(f"{symbol}: insufficient data")
+                continue
+            sig = current_signals(df)
+            sig["symbol"] = symbol
+            signals.append(sig)
+            print(f"{symbol:6s}  k={sig['k']:6.2f}  rsi={sig['rsi']:6.2f}  → {sig['signal']}")
+        except Exception as e:
+            print(f"{symbol}: error — {e}")
+
+    # ── 2. Filter to actionable signals only ─────────────────────────────────
+    positions = state.all_positions()
+    actionable = []
+    for sig in signals:
+        sym = sig["symbol"]
+        if sig["signal"] in ("best_buy", "watch") and sym not in positions:
+            actionable.append(sig)
+        elif sym in positions:
+            pos = positions[sym]
+            if exit_tranches_hit(sig["k"], pos["tranches_sold"]):
+                actionable.append(sig)
+
+    if not actionable:
+        print("\nNo actionable signals this scan.")
+        return
+
+    print(f"\nActionable: {[s['symbol'] for s in actionable]}")
+
+    # ── 3. Hand off to Claude + Robinhood MCP for execution ──────────────────
+    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+    prompt = build_order_prompt(actionable, positions)
 
     response = client.beta.messages.create(
         model="claude-opus-4-8",
-        max_tokens=16000,
-        messages=[{"role": "user", "content": STRATEGY_PROMPT}],
-        mcp_servers=[
-            {
-                "type": "url",
-                "url": ROBINHOOD_MCP_URL,
-                "name": "robinhood",
-                "authorization_token": ROBINHOOD_MCP_TOKEN,
-            }
-        ],
+        max_tokens=4096,
+        messages=[{"role": "user", "content": prompt}],
+        mcp_servers=[{
+            "type": "url",
+            "url": ROBINHOOD_MCP_URL,
+            "name": "robinhood",
+            "authorization_token": ROBINHOOD_MCP_TOKEN,
+        }],
         betas=["mcp-client-2025-04-04"],
     )
 
-    # Print full response
-    for block in response.content:
-        if hasattr(block, "text"):
-            print(block.text)
+    # ── 4. Parse actions and update local state ───────────────────────────────
+    import re
+    full_text = "".join(b.text for b in response.content if hasattr(b, "text"))
+    print("\n" + full_text)
 
-    # Persist any state updates Claude emitted
-    full_text = " ".join(b.text for b in response.content if hasattr(b, "text"))
-    _save_state(full_text)
+    match = re.search(r"```actions\s*\n(.*?)```", full_text, re.DOTALL)
+    if not match:
+        return
 
-    print(f"\nInput tokens: {response.usage.input_tokens}  Output: {response.usage.output_tokens}")
+    actions = json.loads(match.group(1).strip())
+    for act in actions:
+        sym = act["symbol"]
+        if act["action"] == "buy" and not DRY_RUN:
+            # Claude placed the order; record in state (price unknown until fill)
+            # Use last close as approximate entry price
+            sig = next((s for s in signals if s["symbol"] == sym), {})
+            state.open_position(sym, shares=0, entry_price=0, dollar_invested=act.get("dollars", 0))
+        elif act["action"] == "sell_tranche" and not DRY_RUN:
+            state.record_tranche_sold(sym, act["k_level"], act.get("shares", 0))
+            pos = state.get_position(sym)
+            if pos and len(pos["tranches_sold"]) >= 4:
+                state.close_position(sym)
+                print(f"{sym}: fully closed")
 
 
 if __name__ == "__main__":
