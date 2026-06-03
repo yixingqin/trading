@@ -3,12 +3,15 @@ Strategy engine: scans watchlist, executes entries and staged exits.
 """
 
 import logging
+import os
 from config import (
     WATCHLIST, POSITION_SIZE_PCT, ACCOUNT_SIZE, EXIT_TRANCHES,
 )
 import robinhood_client as rh
 import state
 from indicators import current_signals, exit_tranches_hit
+
+DRY_RUN = os.getenv("DRY_RUN", "false").lower() in ("1", "true", "yes")
 
 logger = logging.getLogger(__name__)
 
@@ -67,10 +70,18 @@ def _execute_entry(symbol: str, sig: dict) -> None:
     label = "BEST BUY" if sig["signal"] == "best_buy" else "WATCH"
     logger.info(f"{symbol}: [{label}] entering ~${dollars:.2f}  k={sig['k']} rsi={sig['rsi']}")
 
+    if DRY_RUN:
+        logger.info(f"{symbol}: [DRY RUN] would buy ~${dollars:.2f}")
+        return
+
     order = rh.place_market_buy(symbol, dollars)
     order_id = order.get("id", "?")
-    filled_qty = float(order.get("filled_quantity", 0))
-    avg_price = float(order.get("average_price", 0))
+    filled_qty = float(order.get("quantity") or order.get("filled_quantity") or 0)
+    executions = order.get("executions", [])
+    avg_price = float(
+        executions[0].get("effective_price", 0) if executions
+        else order.get("average_price") or order.get("price") or 0
+    )
 
     if filled_qty <= 0:
         logger.error(f"{symbol}: buy order {order_id} not filled immediately — check manually")
@@ -88,9 +99,19 @@ def _execute_tranche_exit(symbol: str, pos: dict, k_level: int) -> None:
         return
 
     logger.info(f"{symbol}: exit tranche @k≥{k_level} — selling {shares_to_sell} shares ({tranche_pct*100:.0f}%)")
+
+    if DRY_RUN:
+        logger.info(f"{symbol}: [DRY RUN] would sell {shares_to_sell} shares")
+        state.record_tranche_sold(symbol, k_level, 0)
+        return
+
     order = rh.place_market_sell(symbol, shares_to_sell)
     order_id = order.get("id", "?")
-    avg_price = float(order.get("average_price", 0))
+    executions = order.get("executions", [])
+    avg_price = float(
+        executions[0].get("effective_price", 0) if executions
+        else order.get("average_price") or order.get("price") or 0
+    )
 
     state.record_tranche_sold(symbol, k_level, shares_to_sell)
     logger.info(f"{symbol}: sold {shares_to_sell} @ ${avg_price:.4f}  order={order_id}")
