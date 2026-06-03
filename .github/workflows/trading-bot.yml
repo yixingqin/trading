@@ -2,7 +2,7 @@ name: Trading Bot
 
 on:
   schedule:
-    # 4h candle closes at 9:30, 13:30, 17:30, 21:30 ET → UTC: 13:31, 17:31, 21:31, 01:31
+    # 4h candle closes at 9:30, 13:30, 17:30, 21:30 ET → UTC+0: 13:31, 17:31, 21:31, 01:31
     - cron: "31 13 * * 1-5"
     - cron: "31 17 * * 1-5"
     - cron: "31 21 * * 1-5"
@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
     inputs:
       dry_run:
-        description: "Dry run (no orders placed)"
+        description: "Dry run (log signals, no orders)"
         type: boolean
         default: true
 
@@ -25,30 +25,28 @@ jobs:
           python-version: "3.11"
           cache: pip
 
-      - run: pip install -r requirements.txt
+      - run: pip install anthropic
 
-      # Restore state from previous run (positions, tranches sold)
+      # Restore persisted position state from prior run
       - name: Restore state
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: state.json
-          key: trading-state-${{ github.ref_name }}
-          restore-keys: trading-state-
+          key: trading-state-${{ github.ref_name }}-latest
+          restore-keys: trading-state-${{ github.ref_name }}-
 
-      - name: Run scan
+      - name: Run strategy agent
         env:
-          ROBINHOOD_MCP_URL: ${{ secrets.ROBINHOOD_MCP_URL }}
-          ROBINHOOD_API_TOKEN: ${{ secrets.ROBINHOOD_API_TOKEN }}
-          TRADING_ACCOUNT_ID: ${{ secrets.TRADING_ACCOUNT_ID }}
-          POSITION_SIZE_PCT: "0.05"
-          ACCOUNT_SIZE: "5000"
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ROBINHOOD_MCP_URL: https://agent.robinhood.com/mcp/trading
+          ROBINHOOD_MCP_TOKEN: ${{ secrets.ROBINHOOD_MCP_TOKEN }}
           DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
-        run: python cli.py scan
+        run: python agent_runner.py
 
-      # Persist updated state
+      # Save updated state (positions opened/closed this run)
       - name: Save state
         if: always()
         uses: actions/cache/save@v4
         with:
           path: state.json
-          key: trading-state-${{ github.ref_name }}-${{ github.run_id }}
+          key: trading-state-${{ github.ref_name }}-latest
