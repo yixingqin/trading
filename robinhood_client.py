@@ -56,25 +56,41 @@ def _call(method: str, params: dict) -> dict:
 
 # ── Market data ──────────────────────────────────────────────────────────────
 
-def _candles_from_yfinance(symbol: str, count: int = 100) -> pd.DataFrame:
-    """Fetch 4h OHLCV via yfinance (1h data resampled to 4h)."""
-    # 1h bars max lookback is 730d; 100 4h bars ≈ 400 1h bars ≈ 62 trading days
-    days_needed = max(int(count * 4 / 6.5) + 10, 60)
-    period = f"{min(days_needed, 729)}d"
+def _fetch_1h_raw(symbol: str, days: int = 60) -> pd.DataFrame:
+    """Download 1h bars from yfinance and normalize columns."""
+    period = f"{min(days, 729)}d"
     raw = yf.download(symbol, period=period, interval="1h", progress=False, auto_adjust=True)
     if raw.empty:
         return pd.DataFrame()
-    # Flatten MultiIndex columns produced by yfinance >= 0.2
     if isinstance(raw.columns, pd.MultiIndex):
         raw.columns = [c[0].lower() for c in raw.columns]
     else:
         raw.columns = [c.lower() for c in raw.columns]
-    # Resample to 4h aligned to market open (9:30 ET → offset 30min)
-    ohlcv = raw[["open", "high", "low", "close", "volume"]].resample(
-        "4h", offset="30min"
-    ).agg({"open": "first", "high": "max", "low": "min", "close": "last", "volume": "sum"})
-    ohlcv = ohlcv.dropna(subset=["close"]).tail(count)
-    return ohlcv
+    return raw[["open", "high", "low", "close", "volume"]]
+
+
+def _candles_from_yfinance(symbol: str, count: int = 100) -> pd.DataFrame:
+    """Fetch 4h OHLCV via yfinance (1h data resampled to 4h)."""
+    days_needed = max(int(count * 4 / 6.5) + 10, 60)
+    raw = _fetch_1h_raw(symbol, days=days_needed)
+    if raw.empty:
+        return pd.DataFrame()
+    ohlcv = raw.resample("4h", offset="30min").agg(
+        {"open": "first", "high": "max", "low": "min", "close": "last", "volume": "sum"}
+    )
+    return ohlcv.dropna(subset=["close"]).tail(count)
+
+
+def get_candles_1h(symbol: str, count: int = 200) -> pd.DataFrame:
+    """Fetch raw 1h OHLCV bars via yfinance."""
+    try:
+        days_needed = max(int(count / 6.5) + 10, 30)
+        raw = _fetch_1h_raw(symbol, days=days_needed)
+        if not raw.empty:
+            return raw.dropna(subset=["close"]).tail(count)
+    except Exception as e:
+        logger.warning(f"yfinance 1h failed for {symbol}: {e}")
+    return pd.DataFrame()
 
 
 def get_candles(symbol: str, interval: str = CANDLE_INTERVAL, count: int = 100) -> pd.DataFrame:

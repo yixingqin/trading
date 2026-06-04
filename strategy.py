@@ -14,6 +14,8 @@ import state
 import notify
 from indicators import rsi, stoch_rsi, current_signals, exit_tranches_hit
 
+# Entry uses 4h candles; exits use 1h candles for faster reaction
+
 logger = logging.getLogger(__name__)
 
 
@@ -40,54 +42,71 @@ def run_scan() -> None:
 
 
 def _scan_symbol(symbol: str) -> dict | None:
-    df = rh.get_candles(symbol)
-    if df.empty:
+    # 4h candles for entry signals
+    df4 = rh.get_candles(symbol)
+    if df4.empty:
         logger.warning(f"{symbol}: no candle data")
         return None
 
-    # Compute indicators
-    rsi14 = rsi(df["close"], RSI_PERIOD)
-    k, d = stoch_rsi(
-        df["close"],
+    rsi14 = rsi(df4["close"], RSI_PERIOD)
+    k4, d4 = stoch_rsi(
+        df4["close"],
         rsi_period=STOCH_RSI_RSI_PERIOD,
         stoch_period=STOCH_RSI_STOCH_PERIOD,
         k_smooth=STOCH_RSI_K,
         d_smooth=STOCH_RSI_D,
     )
     latest_rsi = rsi14.iloc[-1]
-    latest_k = k.iloc[-1]
-    latest_d = d.iloc[-1]
-    price = df["close"].iloc[-1]
+    latest_k4 = k4.iloc[-1]
+    latest_d4 = d4.iloc[-1]
+    price = df4["close"].iloc[-1]
 
-    # Signal classification
+    # 1h candles for exit signals
+    df1 = rh.get_candles_1h(symbol)
+    if not df1.empty:
+        k1, d1 = stoch_rsi(
+            df1["close"],
+            rsi_period=STOCH_RSI_RSI_PERIOD,
+            stoch_period=STOCH_RSI_STOCH_PERIOD,
+            k_smooth=STOCH_RSI_K,
+            d_smooth=STOCH_RSI_D,
+        )
+        latest_k1 = k1.iloc[-1]
+        latest_d1 = d1.iloc[-1]
+    else:
+        latest_k1, latest_d1 = latest_k4, latest_d4
+
+    # Entry signal uses 4h K
     signal = "none"
-    if latest_k < 10 and latest_rsi <= 50:
+    if latest_k4 < 10 and latest_rsi <= 50:
         signal = "best_buy"
-    elif latest_k < 10 and latest_rsi <= 60:
+    elif latest_k4 < 10 and latest_rsi <= 60:
         signal = "watch"
 
     row = {
         "sym": symbol,
         "price": price,
         "rsi": round(latest_rsi, 1),
-        "k": round(latest_k, 1),
-        "d": round(latest_d, 1),
+        "k4": round(latest_k4, 1),
+        "d4": round(latest_d4, 1),
+        "k1": round(latest_k1, 1),
+        "d1": round(latest_d1, 1),
         "signal": signal,
     }
 
     existing = state.get_position(symbol)
 
-    # ── Exit logic ────────────────────────────────────────────────────────────
+    # ── Exit logic uses 1h K ──────────────────────────────────────────────────
     if existing:
         filled = existing["tranches_sold"]
-        to_exit = exit_tranches_hit(latest_k, filled)
+        to_exit = exit_tranches_hit(latest_k1, filled)
         for level in to_exit:
             _execute_tranche_exit(symbol, existing, level, price)
         existing = state.get_position(symbol)
 
-    # ── Entry logic ───────────────────────────────────────────────────────────
+    # ── Entry logic uses 4h K ─────────────────────────────────────────────────
     if signal in ("best_buy", "watch") and not existing:
-        _execute_entry(symbol, signal, latest_k, latest_rsi, price)
+        _execute_entry(symbol, signal, latest_k4, latest_rsi, price)
 
     return row
 

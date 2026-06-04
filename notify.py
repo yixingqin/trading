@@ -29,17 +29,27 @@ def alert_sell(symbol: str, shares: float, price: float, k_level: int, pct: int)
 
 
 def alert_scan_table(rows: list[dict]) -> None:
-    header = f"\n{'─'*68}\n{'Symbol':<6} {'Price':>8}  {'RSI14':>5}  {'K':>6} {'D':>6}  {'Signal'}\n{'─'*68}"
+    header = (
+        f"\n{'─'*80}\n"
+        f"{'Symbol':<6} {'Price':>8}  {'RSI14':>5}  "
+        f"{'4H-K':>6} {'4H-D':>6}  {'1H-K':>6} {'1H-D':>6}  {'Signal'}\n"
+        f"{'─'*80}"
+    )
     print(header)
     with open(TRADE_LOG, "a") as f:
         ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
         f.write(f"\n[{ts}] SCAN\n")
         f.write(header + "\n")
         for r in rows:
-            line = f"{r['sym']:<6} {r['price']:>8.2f}  {r['rsi']:>5.1f}  {r['k']:>6.1f} {r['d']:>6.1f}  {r.get('signal','')}"
+            line = (
+                f"{r['sym']:<6} {r['price']:>8.2f}  {r['rsi']:>5.1f}  "
+                f"{r.get('k4', r.get('k', 0)):>6.1f} {r.get('d4', r.get('d', 0)):>6.1f}  "
+                f"{r.get('k1', r.get('k', 0)):>6.1f} {r.get('d1', r.get('d', 0)):>6.1f}  "
+                f"{r.get('signal','')}"
+            )
             print(line)
             f.write(line + "\n")
-    print("─" * 68)
+    print("─" * 80)
 
 
 def alert_error(symbol: str, msg: str) -> None:
