@@ -30,10 +30,10 @@ def alert_sell(symbol: str, shares: float, price: float, k_level: int, pct: int)
 
 def alert_scan_table(rows: list[dict]) -> None:
     header = (
-        f"\n{'─'*80}\n"
-        f"{'Symbol':<6} {'Price':>8}  {'RSI14':>5}  "
+        f"\n{'─'*92}\n"
+        f"{'Symbol':<6} {'Price':>8}  {'P&L%':>6}  {'RSI14':>5}  "
         f"{'4H-K':>6} {'4H-D':>6}  {'1H-K':>6} {'1H-D':>6}  {'Signal'}\n"
-        f"{'─'*80}"
+        f"{'─'*92}"
     )
     print(header)
     with open(TRADE_LOG, "a") as f:
@@ -41,15 +41,17 @@ def alert_scan_table(rows: list[dict]) -> None:
         f.write(f"\n[{ts}] SCAN\n")
         f.write(header + "\n")
         for r in rows:
+            pnl = r.get("pnl_pct")
+            pnl_str = f"{pnl:>+.1f}%" if pnl is not None else "      "
             line = (
-                f"{r['sym']:<6} {r['price']:>8.2f}  {r['rsi']:>5.1f}  "
+                f"{r['sym']:<6} {r['price']:>8.2f}  {pnl_str:>6}  {r['rsi']:>5.1f}  "
                 f"{r.get('k4', r.get('k', 0)):>6.1f} {r.get('d4', r.get('d', 0)):>6.1f}  "
                 f"{r.get('k1', r.get('k', 0)):>6.1f} {r.get('d1', r.get('d', 0)):>6.1f}  "
                 f"{r.get('signal','')}"
             )
             print(line)
             f.write(line + "\n")
-    print("─" * 80)
+    print("─" * 92)
 
 
 def alert_error(symbol: str, msg: str) -> None:

@@ -83,6 +83,13 @@ def _scan_symbol(symbol: str) -> dict | None:
     elif latest_k4 < 10 and latest_rsi <= 60:
         signal = "watch"
 
+    existing = state.get_position(symbol)
+    pnl_pct = None
+    if existing:
+        entry = existing.get("entry_price", 0)
+        if entry > 0:
+            pnl_pct = round((price - entry) / entry * 100, 2)
+
     row = {
         "sym": symbol,
         "price": price,
@@ -92,9 +99,8 @@ def _scan_symbol(symbol: str) -> dict | None:
         "k1": round(latest_k1, 1),
         "d1": round(latest_d1, 1),
         "signal": signal,
+        "pnl_pct": pnl_pct,
     }
-
-    existing = state.get_position(symbol)
 
     # ── Exit logic uses 1h K ──────────────────────────────────────────────────
     if existing:
