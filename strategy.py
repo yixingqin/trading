@@ -85,10 +85,13 @@ def _scan_symbol(symbol: str) -> dict | None:
 
     existing = state.get_position(symbol)
     pnl_pct = None
+    pnl_dollars = None
     if existing:
         entry = existing.get("entry_price", 0)
+        shares = existing.get("shares", 0)
         if entry > 0:
             pnl_pct = round((price - entry) / entry * 100, 2)
+            pnl_dollars = round((price - entry) * shares, 2)
 
     row = {
         "sym": symbol,
@@ -100,6 +103,7 @@ def _scan_symbol(symbol: str) -> dict | None:
         "d1": round(latest_d1, 1),
         "signal": signal,
         "pnl_pct": pnl_pct,
+        "pnl_dollars": pnl_dollars,
     }
 
     # ── Exit logic uses 1h K ──────────────────────────────────────────────────
