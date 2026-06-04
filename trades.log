@@ -1,0 +1,66 @@
+[2026-06-04 13:33 UTC] 🟢 WATCH BUY  HIVE    $250.00 → 25.0000 shares @ $10.0000  |  RSI=52.2  K=0.0
+[2026-06-04 13:33 UTC] 🟢 WATCH BUY  SHAZ    $250.00 → 25.0000 shares @ $10.0000  |  RSI=58.1  K=5.9
+[2026-06-04 13:33 UTC] 🟢 WATCH BUY  OUST    $250.00 → 25.0000 shares @ $10.0000  |  RSI=53.8  K=2.5
+[2026-06-04 13:33 UTC] 🟢 BEST BUY  FCEL    $250.00 → 25.0000 shares @ $10.0000  |  RSI=48.5  K=0.3
+[2026-06-04 13:33 UTC] 🟢 BEST BUY  SHMD    $250.00 → 25.0000 shares @ $10.0000  |  RSI=37.6  K=7.1
+[2026-06-04 13:33 UTC] 🟢 BEST BUY  VELO    $250.00 → 25.0000 shares @ $10.0000  |  RSI=42.3  K=0.1
+[2026-06-04 13:33 UTC] 🟢 BEST BUY  CRDO    $250.00 → 25.0000 shares @ $10.0000  |  RSI=48.3  K=3.2
+[2026-06-04 13:33 UTC] 🟢 BEST BUY  OKLO    $250.00 → 25.0000 shares @ $10.0000  |  RSI=45.6  K=0.0
+[2026-06-04 13:33 UTC] 🟢 BEST BUY  ASTS    $250.00 → 25.0000 shares @ $10.0000  |  RSI=49.5  K=0.2
+[2026-06-04 13:33 UTC] 🟢 BEST BUY  RKLB    $250.00 → 25.0000 shares @ $10.0000  |  RSI=37.0  K=0.0
+[2026-06-04 13:33 UTC] 🟢 WATCH BUY  NOW     $250.00 → 25.0000 shares @ $10.0000  |  RSI=59.6  K=8.4
+[2026-06-04 13:33 UTC] 🟢 BEST BUY  AUR     $250.00 → 25.0000 shares @ $10.0000  |  RSI=45.0  K=7.6
+[2026-06-04 13:33 UTC] 🟢 WATCH BUY  PANW    $250.00 → 25.0000 shares @ $10.0000  |  RSI=60.0  K=1.2
+[2026-06-04 13:33 UTC] 🟢 WATCH BUY  PALU    $250.00 → 25.0000 shares @ $10.0000  |  RSI=55.7  K=1.3
+[2026-06-04 13:33 UTC] 🟢 BEST BUY  USAR    $250.00 → 25.0000 shares @ $10.0000  |  RSI=49.6  K=0.3
+[2026-06-04 13:33 UTC] 🟢 WATCH BUY  CLSK    $250.00 → 25.0000 shares @ $10.0000  |  RSI=51.5  K=0.8
+[2026-06-04 13:33 UTC] 🟢 BEST BUY  APLD    $250.00 → 25.0000 shares @ $10.0000  |  RSI=46.1  K=0.0
+[2026-06-04 13:33 UTC] 🟢 BEST BUY  BTI     $250.00 → 25.0000 shares @ $10.0000  |  RSI=23.6  K=0.0
+
+[2026-06-04 13:33 UTC] SCAN
+
+────────────────────────────────────────────────────────────────────
+Symbol    Price  RSI14       K      D  Signal
+────────────────────────────────────────────────────────────────────
+HIVE       4.14   52.2     0.0    0.0  watch
+SHAZ      74.50   58.1     5.9   37.3  watch
+TE        12.02   69.9    34.2   42.6  none
+OUST      41.51   53.8     2.5   11.6  watch
+FCEL      21.17   48.5     0.3   14.6  best_buy
+SHMD       5.97   37.6     7.1    5.4  best_buy
+VELO      19.26   42.3     0.1    3.1  best_buy
+NBIS     239.33   56.5    33.7   51.8  none
+CRWV     107.50   45.5    24.2   41.5  none
+BE       277.00   46.1    23.6   41.2  none
+CRDO     206.51   48.3     3.2   10.0  best_buy
+AAOI     177.48   49.0    53.9   69.9  none
+LITE     882.18   45.3    46.9   66.8  none
+OKLO      64.74   45.6     0.0   33.3  best_buy
+ASTS     104.48   49.5     0.2    8.4  best_buy
+RKLB     112.16   37.0     0.0    1.3  best_buy
+PLTR     143.26   49.4    23.4   34.0  none
+NOW      120.63   59.6     8.4   21.0  watch
+AUR        6.90   45.0     7.6   32.5  best_buy
+HOOD      83.31   52.0    28.5   39.2  none
+PANW     277.07   60.0     1.2   22.5  watch
+PALU      34.29   55.7     1.3   22.4  watch
+IREN      61.86   51.6    15.7   29.6  none
+NOK       15.84   55.3    44.6   58.7  none
+BB         9.97   73.5     5.6   35.3  none
+FSLY      19.79   54.7    79.6   91.3  none
+USAR      26.91   49.6     0.3   31.1  best_buy
+RCAT      13.56   59.4    38.9   56.2  none
+PURR       9.66   56.6    20.5   45.5  none
+HIMS      27.37   60.2    68.6   72.4  none
+OPEN       4.89   49.3    24.1   44.0  none
+CLSK      16.84   51.5     0.8    2.5  watch
+RIOT      26.66   54.6    10.9   16.4  none
+APLD      43.96   46.1     0.0    4.9  best_buy
+CORZ      28.24   61.3    22.6   38.3  none
+BTI       58.60   23.6     0.0    0.8  best_buy
+SMH      616.38   61.1    66.7   88.9  none
+NVDA     213.90   45.1    24.3   47.5  none
+ORCL     228.38   62.4    36.2   52.7  none
+AVGO     410.09   38.9    58.8   83.7  none
+AMD      512.41   59.5    58.6   60.1  none
+MU      1013.62   66.7    66.7   88.4  none
