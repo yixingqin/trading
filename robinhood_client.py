@@ -13,6 +13,7 @@ import logging
 import time
 import requests
 import pandas as pd
+import yfinance as yf
 from datetime import datetime, timedelta
 from config import MCP_URL, MCP_TOKEN, TRADING_ACCOUNT, CANDLE_INTERVAL
 
@@ -55,23 +56,72 @@ def _call(method: str, params: dict) -> dict:
 
 # ── Market data ──────────────────────────────────────────────────────────────
 
-def get_candles(symbol: str, interval: str = CANDLE_INTERVAL, count: int = 100) -> pd.DataFrame:
-    """Fetch OHLCV candles. Returns DataFrame with DatetimeIndex."""
-    result = _call("market.candles", {
-        "symbol": symbol,
-        "interval": interval,
-        "count": count,
-        "account_id": TRADING_ACCOUNT,
-    })
-    candles = result.get("candles", [])
-    if not candles:
+def _fetch_1h_raw(symbol: str, days: int = 60) -> pd.DataFrame:
+    """Download 1h bars from yfinance and normalize columns."""
+    period = f"{min(days, 729)}d"
+    raw = yf.download(symbol, period=period, interval="1h", progress=False, auto_adjust=True)
+    if raw.empty:
         return pd.DataFrame()
-    df = pd.DataFrame(candles)
-    df["timestamp"] = pd.to_datetime(df["timestamp"])
-    df = df.set_index("timestamp").sort_index()
-    for col in ["open", "high", "low", "close", "volume"]:
-        df[col] = df[col].astype(float)
-    return df
+    if isinstance(raw.columns, pd.MultiIndex):
+        raw.columns = [c[0].lower() for c in raw.columns]
+    else:
+        raw.columns = [c.lower() for c in raw.columns]
+    return raw[["open", "high", "low", "close", "volume"]]
+
+
+def _candles_from_yfinance(symbol: str, count: int = 100) -> pd.DataFrame:
+    """Fetch 4h OHLCV via yfinance (1h data resampled to 4h)."""
+    days_needed = max(int(count * 4 / 6.5) + 10, 60)
+    raw = _fetch_1h_raw(symbol, days=days_needed)
+    if raw.empty:
+        return pd.DataFrame()
+    ohlcv = raw.resample("4h", offset="30min").agg(
+        {"open": "first", "high": "max", "low": "min", "close": "last", "volume": "sum"}
+    )
+    return ohlcv.dropna(subset=["close"]).tail(count)
+
+
+def get_candles_1h(symbol: str, count: int = 200) -> pd.DataFrame:
+    """Fetch raw 1h OHLCV bars via yfinance."""
+    try:
+        days_needed = max(int(count / 6.5) + 10, 30)
+        raw = _fetch_1h_raw(symbol, days=days_needed)
+        if not raw.empty:
+            return raw.dropna(subset=["close"]).tail(count)
+    except Exception as e:
+        logger.warning(f"yfinance 1h failed for {symbol}: {e}")
+    return pd.DataFrame()
+
+
+def get_candles(symbol: str, interval: str = CANDLE_INTERVAL, count: int = 100) -> pd.DataFrame:
+    """Fetch OHLCV candles via yfinance, falling back to MCP."""
+    try:
+        df = _candles_from_yfinance(symbol, count)
+        if not df.empty:
+            return df
+    except Exception as e:
+        logger.warning(f"yfinance failed for {symbol}: {e}. Falling back to MCP.")
+
+    # MCP fallback
+    try:
+        result = _call("market.candles", {
+            "symbol": symbol,
+            "interval": interval,
+            "count": count,
+            "account_id": TRADING_ACCOUNT,
+        })
+        candles = result.get("candles", [])
+        if not candles:
+            return pd.DataFrame()
+        df = pd.DataFrame(candles)
+        df["timestamp"] = pd.to_datetime(df["timestamp"])
+        df = df.set_index("timestamp").sort_index()
+        for col in ["open", "high", "low", "close", "volume"]:
+            df[col] = df[col].astype(float)
+        return df
+    except Exception as e:
+        logger.error(f"MCP candles also failed for {symbol}: {e}")
+        return pd.DataFrame()
 
 
 def get_quote(symbol: str) -> dict:

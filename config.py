@@ -39,6 +39,11 @@ WATCHLIST = [
     "HIVE", "SHAZ", "TE", "OUST", "FCEL", "SHMD", "VELO", "NBIS",
     "CRWV", "BE", "CRDO", "AAOI", "LITE", "OKLO", "ASTS", "RKLB",
     "PLTR", "NOW", "AUR", "HOOD",
+    # added
+    "PANW", "PALU",
+    "IREN", "NOK", "BB", "FSLY", "USAR", "RCAT", "PURR", "HIMS",
+    "OPEN", "CLSK", "RIOT", "APLD", "CORZ", "BTI", "SMH", "NVDA",
+    "ORCL", "AVGO", "AMD", "MU", "ASML", "INTC", "TSM", "GLW", "INFY",
 ]
 
 # Scan every 4 hours aligned to market open (9:30 ET)
